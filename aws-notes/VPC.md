@@ -95,9 +95,7 @@ A NAT Gateway works one-way — it does not accept incoming requests from the in
     -   Route table: 0.0.0.0/0 → nat-xxxx
     -   Important Note: A NAT Gateway does not accept new inbound connections from the internet. It only handles responses to connections initiated by the private instance itself. (e.g., response to a sudo apt update request)
 
-### Internet Gateway (IGW), NAT Gateway, Route Table
-
-**What is a Route Table?**
+### What is a Route Table?
 
 A Route Table is the mechanism that controls all traffic routing decisions for a subnet.
 It manages both:
@@ -124,3 +122,118 @@ This rule means:
 -   All VPC internal communication is handled as LOCAL.
 -   This rule cannot be deleted or modified.
 
+### Traffic Flow Examples
+
+#### 1. Public & Private EC2 Instances – Incoming Request from the Internet and Outgoing Response
+
+Scenario : A user opens http://web.burak.com  in their browser. This request will reach the web server running on our EC2 instance. In this scenario, the traffic flow is identical for both Public and Private subnets.
+
+-   **Incoming Traffic – Request**
+    -   Summary : (Internet ➜ Elastic IP ➜ IGW ➜ Public Subnet ➜ Route Table ➜ ELB ➜ Security Group ➜ Target EC2 Web Server)
+
+    -   DNS resolves the domain and sends the request to the Elastic IP (static IP).
+    -   Traffic reaches the Internet Gateway (IGW).
+    -   IGW is attached to the VPC, so it forwards the request to the public subnet.
+    -   Public Subnet Route Table says:
+        -   10.0.0.0/16 → local
+        -   Meaning: If the IP is inside the VPC, forward it to the ELB.
+    -   Security Group becomes active. If the incoming port is allowed, the request is forwarded to the EC2 web server in the ELB’s Target Group.
+
+
+-   **Outgoing Traffic – Response**
+    -   Summmary : (EC2 Web Server ➜ Security Group ➜ Route Table ➜ ELB ➜ Route Table ➜ IGW ➜ Internet)
+    
+    -   EC2 wants to send the response back to the internet.
+    
+    -   Security Group becomes active again. If outbound access is allowed, traffic proceeds to the Route Table.
+    
+    -   EC2 checks the Private Subnet Route Table (even if it’s a public subnet scenario, this logic remains consistent):
+        -   10.0.0.0/16 → local
+        -   Meaning: If the ELB is inside the VPC, send traffic locally.
+    
+    -   EC2’s response reaches the ELB first. (ELB Security Group automatically allows return traffic.)
+    
+    -   To send the response back to the user, the ELB must reach the internet, so the Public Subnet Route Table is used:   
+        -   0.0.0.0/0 → igw-xxxx
+        -   Meaning: Traffic destined for the internet goes out through the IGW.
+    
+    -   Finally, the response is sent back to the user through the IGW.
+
+
+#### 2. Request from a Private EC2 Instance to the Internet
+
+Scenario:  An EC2 instance inside a Private Subnet sends a request to the internet (e.g., sudo apt update).
+
+-   **Outgoing Traffic – Request**
+
+    -   Summary : (EC2 Web Server ➜ Security Group ➜ Route Table ➜ NAT Gateway ➜ IGW ➜ Internet)
+
+    -   The EC2 instance wants to make an outbound request to the internet (e.g., sudo apt update).
+
+    -   Security Group becomes active. If outbound rules allow it, the traffic proceeds to the Route Table.
+
+    -   EC2 checks the Private Subnet Route Table. The Route Table says:
+        -   0.0.0.0/0 → nat-xxxx
+        -   Meaning: all outbound internet traffic must go to the NAT Gateway.
+
+    -   Traffic reaches the NAT Gateway.
+
+    -   NAT Gateway sends this traffic to the Internet Gateway (IGW).
+
+    -   The request (e.g., to package repositories or update servers) reaches the external destination.
+
+-   **Incoming Traffic – Response**
+
+    -   Summary : (Internet ➜ IGW ➜ NAT Gateway ➜ Private Subnet Route Table ➜ EC2 Web Server)
+
+    -   The external server (e.g., Ubuntu/Debian package repo) wants to send the response back.
+
+    -   The response first reaches the IGW.
+
+    -   IGW forwards this response to the NAT Gateway.
+
+    -   NAT Gateway recognizes that this session was initiated by the Private EC2 instance → It sends the packets back to the EC2.
+
+    -   NAT Gateway forwards the response to the Private Subnet Route Table, which routes it:
+        -   10.0.0.0/16 → local
+        -   Meaning: deliver the response locally to the Private EC2 instance.
+
+    -   The EC2 instance receives the response and completes the request (e.g., package lists updated successfully).
+
+## Security
+
+### Security Group (SG) – Instance Level Firewall
+
+**What is a Security Group?**
+
+-   It is the dedicated security firewall attached to an EC2 instance.
+-   It is attached to the instance, not to the subnet.
+-   It answers the question:
+    -   “Who can reach this EC2, and who can this EC2 communicate with?”
+-   Works as allow-only. You cannot write DENY rules.
+-   When you create a VPC, all inbound traffic is blocked, and only outbound traffic is allowed by default.
+-   SGs are stateful, meaning:
+    -   If you allow inbound traffic, the outbound response is automatically allowed.
+
+**Example Configuration**
+-   Inbound
+    -   80/tcp → 0.0.0.0/0
+    -   443/tcp → 0.0.0.0/0
+    -   22/tcp → Your IP only
+-   Outbound
+    -   All traffic → 0.0.0.0/0 (default open)
+
+### NACL (Network Access Control List)
+**What is a NACL?**
+-   It is the security firewall at the subnet boundary.
+    -   Works at the subnet level, not the instance level.
+-   Unlike SGs, NACLs allow both ALLOW and DENY rules.
+-   Unlike SGs, NACLs are stateless, meaning:
+    -   If you allow inbound traffic, you must also explicitly allow the outbound return traffic.
+-   Each subnet uses only one NACL.
+-   When you create a VPC, inbound and outbound rules are fully allowed by default.
+-   NACLs act as a broader, outer-layer security filter compared to SGs.
+
+**Rule Evaluation Order**
+-   Rules are evaluated top to bottom based on increasing rule numbers.
+-   The first matching rule is applied, and all others are ignored.
