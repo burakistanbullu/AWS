@@ -75,7 +75,9 @@ Create IAM users for daily operational work.”
 
     -   The application uses these credentials to interact with AWS securely.
 
-# Region
+# Region and Availability Zone
+
+## Region
 
 **What is a Region?**
 
@@ -103,7 +105,7 @@ When choosing an AWS region, you should consider four key factors:
 
 -   *Cost* : Prices vary by region (e.g., Virginia is generally cheaper).
 
-# Availability Zone
+## Availability Zone
 
 **What is an Availability Zone (AZ)?**
 
